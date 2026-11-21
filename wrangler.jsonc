@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "running-journal",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/strava/*"]
+  },
+  "vars": {
+    // Strava API app Client ID (not secret). Client Secret is a Worker secret: STRAVA_CLIENT_SECRET
+    "STRAVA_CLIENT_ID": ""
+  },
+  // Strava sync is built (src/strava.ts) but off: no API app. To enable: set STRAVA_CLIENT_ID,
+  // secret STRAVA_CLIENT_SECRET, and set crons to ["15 */3 * * *"]
+  "triggers": { "crons": [] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "running-journal-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true }
+}

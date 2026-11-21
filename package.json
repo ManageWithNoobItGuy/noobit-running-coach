@@ -1,0 +1,16 @@
+{
+  "name": "noobit-running-coach",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply running-journal-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply running-journal-db --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261109.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.158.0"
+  }
+}

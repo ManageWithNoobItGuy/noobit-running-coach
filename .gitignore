@@ -1,0 +1,23 @@
+node_modules
+.wrangler
+.dev.vars
+.DS_Store
+__pycache__/
+*.pyc
+
+# Personal health data: never commit
+export.zip
+*.zip
+apple_health_export/
+data/*
+!data/.gitkeep
+
+# Secrets (ingest token)
+.secrets/
+
+# Shortcuts are built per install (they contain your site URL)
+public/shortcut/*.shortcut
+*.unsigned.shortcut
+
+# Local Claude settings
+.claude/settings.local.json
