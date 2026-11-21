@@ -35,8 +35,13 @@ repo นี้ตั้งใจให้ **AI Agent เป็นคนติด
 clone repo แล้วทำตาม README.md หัวข้อ "Setup runbook for AI agents" ทีละขั้น คุยกับผมเป็นภาษาไทย
 ```
 
-Agent จะ clone repo, ถามข้อมูลของคุณ (อายุ, HR พัก, เป้าหมาย, ประวัติการวิ่ง), สร้างฐานข้อมูล, deploy เว็บ,
+Agent จะ clone repo, ถามข้อมูลของคุณ (อายุ, HR พัก, เป้าหมาย, ประวัติการวิ่ง), จัดการ Cloudflare ทั้งหมดผ่าน Wrangler ให้เอง
+(ตั้งชื่อ workers.dev, สร้างฐานข้อมูล D1 และตาราง, deploy เว็บ, สร้างรหัสบันทึก) คุณแค่สมัคร Cloudflare ฟรี + กด Allow ตอนล็อกอินครั้งเดียว
+ไม่ต้องเข้าหน้า dashboard ของ Cloudflare เลย แล้ว Agent จะ
 เขียนแผนซ้อมแรก และสอนติดตั้ง Shortcut บน iPhone จบแล้วจะได้ลิงก์เว็บส่วนตัว เช่น `https://running-journal.<ชื่อคุณ>.workers.dev`
+
+**ดูแลระบบต่อ**: จะสำรองข้อมูล, อัปเดตเวอร์ชัน, ดู error, ย้อนข้อมูลที่แก้ผิด หรือเปลี่ยนรหัส ก็แค่บอก Agent เป็นภาษาไทย (เช่น "สำรองฐานข้อมูลให้หน่อย")
+Agent ทำผ่าน Wrangler ตามหัวข้อ "Day-to-day Cloudflare and database management"
 
 **ใช้งานทุกวัน**: วิ่งตามปกติด้วย Apple Watch → Shortcut ส่งข้อมูลเข้าเว็บเอง → เปิด AI Agent ในโฟลเดอร์โปรเจกต์แล้วพิมพ์
 **"เช็คข้อมูล"** (หรือตั้งให้รันเองทุกเช้า) โค้ชจะเขียนโน้ตและปรับแผนให้บนเว็บ จะส่งภาพหน้าจอ Strava / Apple Fitness ให้ Agent ก็ได้
@@ -80,50 +85,74 @@ cd noobit-running-coach
 npm ci
 ```
 
-### Step 2 — Log in to Cloudflare
+### Steps 2–5 — Cloudflare, database, deploy and token (the agent does all of it with Wrangler)
+
+**Everything on Cloudflare is done by you, the agent, through Wrangler.** Do not send the user to the Cloudflare dashboard
+and do not ask them to run commands. The user only does what a human must do:
+
+1. 👆 create a free Cloudflare account at https://dash.cloudflare.com/sign-up and **verify the email** (if they have none yet),
+2. 👆 sign in and click **Allow** in the browser window that `wrangler login` opens,
+3. 👆 choose an account if their login has several.
+
+Asking you to install this app is the user's permission to create the Worker, D1 database, workers.dev subdomain and
+secret on **their own** account. Tell them in one line what you are about to create, then go.
+
+#### Step 2 — Log in (once per computer)
 
 ```bash
-npx wrangler login     # opens a browser: the user signs in and clicks "Allow"
-npx wrangler whoami    # confirm the account
+npx wrangler whoami --json     # exit code 0 + "loggedIn": true → already logged in, skip
+npx wrangler login             # opens the browser; waits until the user clicks Allow (give it a 5+ min timeout)
 ```
 
-A brand-new Cloudflare account has no `workers.dev` subdomain yet. If deploy (Step 4) complains about it, ask the user to open
-**Cloudflare dashboard → Workers & Pages** once and pick a subdomain, then retry.
-If `whoami` lists several accounts, ask which one to use and set `account_id` in `wrangler.jsonc`.
+If the browser cannot open, port 8976 is busy, or the agent runs remotely: `npx wrangler login --device` prints a link
+and a code; show both to the user. Never ask the user to paste an API token into the chat.
 
-### Step 3 — Create the database
+#### Step 3 — One command does the rest
 
 ```bash
-npx wrangler d1 create running-journal-db
+npm run cf:setup
 ```
 
-Copy the printed `database_id` into `wrangler.jsonc` (replace `REPLACE_WITH_YOUR_D1_DATABASE_ID`). Then create the tables:
+`scripts/cf/setup.mjs` is idempotent (safe to re-run after any failure) and does, in order:
+
+| # | What | How (all Wrangler / Cloudflare API with the user's login) |
+|---|---|---|
+| 1 | Check login | `wrangler whoami --json` |
+| 2 | Pick the account | one account → used automatically; saved as `account_id` in `wrangler.jsonc` so no command ever prompts |
+| 3 | workers.dev subdomain | `scripts/cf/ensure-workers-subdomain.mjs` registers one if the account is brand new (no dashboard visit) |
+| 4 | D1 database | `wrangler d1 list` → reuse, else `wrangler d1 create running-journal-db`; writes `database_id` into `wrangler.jsonc` |
+| 5 | Tables | `wrangler d1 migrations apply running-journal-db --remote` |
+| 6 | Deploy | `wrangler deploy` → prints the site URL |
+| 7 | Ingest token | random token in `.secrets/ingest-token.txt` (chmod 600) → `wrangler secret put INGEST_TOKEN` |
+| 8 | Live check | polls `<SITE_URL>/api/ingest/status` until it answers with `configured: true` |
+
+Progress lines go to stderr; the last thing printed is one JSON object. Act on its `status` / exit code:
+
+| Exit | `status` | What you do |
+|---|---|---|
+| 0 | `ready` | Note `site_url` = **SITE_URL** for every later step. Tell the user the link. |
+| 0 | `deployed-not-answering-yet` | A new subdomain can take 1–2 min. Wait, then `curl -s <SITE_URL>/api/ingest/status`. |
+| 2 | `choose-account` | Show the account **names** from `accounts`, ask which one, re-run `npm run cf:setup -- --account-id <id>`. |
+| 3 | `email-not-verified` / `permission` | Ask the user to click the verify link in Cloudflare's email, then re-run. |
+| 4 | `not-logged-in` | Go back to Step 2. |
+| 5 | `existing-database` | The account already has `running-journal-db` (e.g. a second install). Ask: reuse it (`-- --reuse-existing`, deploys over the existing Worker) or install another copy (change `"name"` and `"database_name"` in `wrangler.jsonc`, re-run). Never reuse without asking. |
+| 1 | other | Read the printed Wrangler error, fix it, re-run. See "Troubleshooting" below. |
+
+Options: `--subdomain <name>` (preferred workers.dev name for a new account), `--rotate-token`, `--reuse-existing`,
+`--dry-run` (read-only check: nothing is created or uploaded).
+
+#### Step 4 — Check the result
 
 ```bash
-npx wrangler d1 migrations apply running-journal-db --remote
+curl -s <SITE_URL>/api/dashboard | head -c 300   # JSON, mostly empty until Step 6
+npx wrangler d1 execute running-journal-db --remote --command "SELECT name FROM sqlite_master WHERE type='table'"
 ```
 
-### Step 4 — Deploy the site
+#### Step 5 — The token
 
-```bash
-npx wrangler deploy
-```
-
-Note the URL it prints (`https://running-journal.<subdomain>.workers.dev`) — this is **SITE_URL** for every later step.
-Check: `curl -s <SITE_URL>/api/dashboard` returns JSON (mostly empty for now). A fresh deploy can take a minute to answer.
-
-### Step 5 — Create the ingest token (protects every write)
-
-Shortcuts and the app's write buttons send `Authorization: Bearer <token>`. Generate it, store it locally, upload it as a Worker secret:
-
-```bash
-mkdir -p .secrets && chmod 700 .secrets
-openssl rand -hex 24 > .secrets/ingest-token.txt
-npx wrangler secret put INGEST_TOKEN < .secrets/ingest-token.txt
-```
-
-Do not echo the token in chat. When the user needs it (Step 7 and the app's ⚙ page), have them open
-`.secrets/ingest-token.txt` themselves, or copy it to the clipboard for them (`pbcopy < .secrets/ingest-token.txt` on macOS).
+Never echo `.secrets/ingest-token.txt` in chat. When the user needs it (Step 7 and the app's ⚙ page), copy it to their
+clipboard (`pbcopy < .secrets/ingest-token.txt` on macOS, `clip < .secrets\ingest-token.txt` on Windows) or let them open
+the file. A new or rotated token takes about 10–30 s to reach the live Worker (writes return 401 until then).
 
 ### Step 6 — Interview the athlete and write the profile
 
@@ -217,6 +246,41 @@ Apply it and check `<SITE_URL>/#/plan`.
 
 ---
 
+## Day-to-day Cloudflare and database management (for agents)
+
+The user never needs the Cloudflare dashboard. Do these with Wrangler yourself; ask first only where marked ⚠️.
+
+| Task | Commands |
+|---|---|
+| Run SQL / look at data | `npx wrangler d1 execute running-journal-db --remote --json --command "SELECT …"` (always `--remote`: without it Wrangler uses the empty local copy) |
+| Change data | write `data/YYYY-MM-DD_<name>.sql`, then `npx wrangler d1 execute running-journal-db --remote --file=data/<file>.sql` |
+| Change the schema | new numbered file in `migrations/` → `npm run db:migrate` |
+| Back up the database | `mkdir -p backups && npx wrangler d1 export running-journal-db --remote -y --output backups/<date>.sql` (`backups/` is gitignored: private) — do this before any risky change |
+| Undo a bad data change | `npx wrangler d1 time-travel info running-journal-db` then ⚠️ `npx wrangler d1 time-travel restore running-journal-db --timestamp <ISO time before the change>` (D1 keeps 30 days; confirm the time with the user) |
+| Update the app to a new version of this repo | `git pull` → `npm ci` → `npm run db:migrate` → `npm run deploy` (re-run `npm run cf:setup` if anything is missing) |
+| Deploy code changes | `npm run deploy`; bump `BUILD` in `src/worker.ts` and check the `x-app-build` response header to confirm it is live |
+| Roll back the code | `npx wrangler deployments list` → `npx wrangler rollback <version-id>` (does **not** roll back D1 data) |
+| See live errors | `npx wrangler tail --format pretty` (run in the background, reproduce, read, stop) |
+| Rotate the ingest token | `npm run cf:setup -- --rotate-token`, then the user pastes the new token into both Shortcuts and `/#/settings` |
+| Show what exists | `npx wrangler whoami`, `npx wrangler d1 list`, `npx wrangler secret list`, `npx wrangler deployments list` |
+| Move to another computer | clone the repo, `npm ci`, `npx wrangler login`, copy `.secrets/ingest-token.txt` and `data/` over privately, `npm run cf:setup` (finds the existing database through `account_id`/`database_id` in `wrangler.jsonc`; commit those two ids in the user's private copy) |
+| Remove everything | ⚠️ ask twice, back up first: `npx wrangler delete --name running-journal` and `npx wrangler d1 delete running-journal-db -y` (permanent) |
+
+Never run `DROP`, `DELETE FROM` without a `WHERE`, a time-travel restore, or a delete on the remote database without the user's explicit OK.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `npx.ps1 cannot be loaded` (Windows PowerShell) | use `npx.cmd` / `npm.cmd` |
+| `Not logged in` / code 10000 | `npx wrangler login` again; check `whoami` shows the right account |
+| "More than one account available" | `npm run cf:setup -- --account-id <id>` (writes `account_id`) |
+| "register a workers.dev subdomain", code 10007 | `node scripts/cf/ensure-workers-subdomain.mjs --account-id <id>` |
+| `database not found` / bad `database_id` | the id belongs to another account: set it back to `REPLACE_WITH_YOUR_D1_DATABASE_ID` and re-run `npm run cf:setup` |
+| Live site says `no such table` | migrations went to the local copy: `npm run db:migrate` (it uses `--remote`) |
+| Writes return 401 right after setup | the token secret is still propagating; wait 30 s |
+| Site errors (Cloudflare 1101) | `npx wrangler tail`, reload the page, read the exception |
+
 ## Optional extras (for agents)
 
 - **Import Apple Health history** (past runs, sleep, HR, HRV): the user exports from Health app → profile → Export All Health Data,
@@ -225,16 +289,14 @@ Apply it and check `<SITE_URL>/#/plan`.
 - **Log a run from screenshots**: follow `CLAUDE.md` → "Workflow: a new run arrives".
 - **Strava sync**: built but off. Needs the user's own Strava API app: set `STRAVA_CLIENT_ID` in `wrangler.jsonc`,
   `npx wrangler secret put STRAVA_CLIENT_SECRET`, crons `["15 */3 * * *"]`, deploy, then open `<SITE_URL>/strava/connect`.
-- **Local development**: `npx wrangler d1 migrations apply running-journal-db --local`, apply the profile SQL with `--local`,
-  then `npx wrangler dev` → http://localhost:8787.
+- **Local development**: `npm run db:migrate:local`, apply the profile SQL with `--local`, then `npm run dev` → http://localhost:8787.
 
 ## Privacy and security notes
 
 - The **read** API (`/api/*` GET) has no login: anyone who knows the site URL can read the journal. Keep the URL private.
   For a lock, put the site behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
   and add a bypass rule for `/api/ingest/*` so the Shortcuts can still post (they use the bearer token).
-- Every **write** needs the ingest token. Rotate it by writing a new value to `.secrets/ingest-token.txt`,
-  `npx wrangler secret put INGEST_TOKEN < .secrets/ingest-token.txt`, and updating the token in both Shortcuts and `/#/settings`.
+- Every **write** needs the ingest token. Rotate it with `npm run cf:setup -- --rotate-token` and update the token in both Shortcuts and `/#/settings`.
 - Health data stays in your own Cloudflare D1 database. Nothing is sent anywhere else.
 
 ## Known limits
@@ -252,6 +314,7 @@ Apply it and check `<SITE_URL>/#/plan`.
 | `migrations/` | D1 schema (apply all, in order) |
 | `seed/` | Example SQL for a fresh install (profile, plan) |
 | `data/` | Your private dated SQL history (gitignored) |
+| `scripts/cf/` | One-command Cloudflare setup via Wrangler (`npm run cf:setup`) + workers.dev subdomain helper |
 | `scripts/` | Apple Health export import, sleep extraction, Shortcut builder |
 | `CLAUDE.md` | Operating manual for the AI agent (data conventions, coaching rules, workflows) |
 | `.claude/skills/running-journal/` | The daily "coach check" skill |

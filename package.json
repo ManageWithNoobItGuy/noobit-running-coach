@@ -3,10 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "cf:setup": "node scripts/cf/setup.mjs",
+    "cf:check": "node scripts/cf/setup.mjs --dry-run",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply running-journal-db --remote",
     "db:migrate:local": "wrangler d1 migrations apply running-journal-db --local",
-    "db:migrate:remote": "wrangler d1 migrations apply running-journal-db --remote"
+    "logs": "wrangler tail --format pretty"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261109.1",

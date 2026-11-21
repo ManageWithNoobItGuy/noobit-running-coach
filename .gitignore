@@ -12,8 +12,9 @@ apple_health_export/
 data/*
 !data/.gitkeep
 
-# Secrets (ingest token)
+# Secrets (ingest token) and database backups
 .secrets/
+backups/
 
 # Shortcuts are built per install (they contain your site URL)
 public/shortcut/*.shortcut

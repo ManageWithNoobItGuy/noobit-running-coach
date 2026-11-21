@@ -25,6 +25,8 @@ adjusts the training plan. Talk to the athlete in **Thai**.
 - `data/` — every data change is a dated SQL file (gitignored: it is the athlete's private health history), applied with
   `npx wrangler d1 execute running-journal-db --remote --file=data/<file>.sql`.
   Keep these files: they are the history of the journal.
+- Cloudflare setup/repair: `npm run cf:setup` (`scripts/cf/setup.mjs`: account, workers.dev subdomain, D1, migrations, deploy, token; idempotent).
+  Day-to-day Wrangler tasks (backup, time travel, rollback, logs, token rotation): README → "Day-to-day Cloudflare and database management".
 - Deploy code changes: `npx wrangler deploy`. Local dev: `npx wrangler dev` (local D1 needs the migrations + data files applied with `--local`).
 
 ## Navigation (information architecture)
